@@ -66,5 +66,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Цей додаток потребує доступу до геолокації для симуляції руху самоката.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Цей додаток потребує доступу до геолокації для симуляції руху самоката.</string>
 </dict>
 </plist>
