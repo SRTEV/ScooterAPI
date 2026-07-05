@@ -1,17 +1,21 @@
 import 'package:provider/provider.dart';
 import 'package:flutter/material.dart';
 import 'Controller.dart';
+import 'db.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-void main() => runApp(
-  ChangeNotifierProvider(
-    create: (_) => ScooterViewModel(),
-    child: const MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: ScooterControlPanel(),
-
+void main() async {
+  await dotenv.load(fileName: ".env");
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => ScooterViewModel(),
+      child: const MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: ScooterControlPanel(),
+      ),
     ),
-  ),
-);
+  );
+}
 
 class ScooterControlPanel extends StatelessWidget {
   const ScooterControlPanel({super.key});
@@ -33,6 +37,13 @@ class ScooterControlPanel extends StatelessWidget {
               Text('Battery: ${vm.battery.toInt()} %', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               Slider(value: vm.battery, max: 100, onChanged: vm.updateBattery),
 
+              TextField(
+                onChanged: vm.updateQrCode,
+                decoration: const InputDecoration(
+                  labelText: 'QR Code',
+                  border: OutlineInputBorder(),
+                ),
+              ),
               const SizedBox(height: 20),
 
               Container(
@@ -49,8 +60,8 @@ class ScooterControlPanel extends StatelessWidget {
                     const Text('Location Details:', style: TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
                     Text('Status: ${vm.locationStatus}'),
-                    Text('X (Lat): ${vm.latitude.toStringAsFixed(6)}'),
-                    Text('Y (Lon): ${vm.longitude.toStringAsFixed(6)}'),
+                    Text('X: ${vm.x.toStringAsFixed(6)}'),
+                    Text('Y: ${vm.y.toStringAsFixed(6)}'),
                   ],
                 ),
               ),

@@ -4,13 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
-
+import 'db.dart';
 class ScooterViewModel extends ChangeNotifier {
-  int vehicleId = 1;
   double speed = 0;
   double battery = 100;
-  double latitude = 0.0;
-  double longitude = 0.0;
+  double x = 0.0;
+  double y = 0.0;
+  String qrCode = '';
   String locationStatus = 'Waiting for GPS...';
   bool isSimulating = false;
 
@@ -19,6 +19,11 @@ class ScooterViewModel extends ChangeNotifier {
 
   ScooterViewModel() {
     _startTracking();
+    _initDatabase();
+  }
+
+  void _initDatabase() async {
+    await DatabaseHelper.connectToDatabase();
   }
 
   void _startTracking() async {
@@ -65,8 +70,8 @@ class ScooterViewModel extends ChangeNotifier {
     _positionSubscription?.cancel();
     _positionSubscription = Geolocator.getPositionStream(locationSettings: locationSettings)
     .listen((pos) {
-      latitude = pos.latitude;
-      longitude = pos.longitude;
+      x = pos.latitude;
+      y = pos.longitude;
       locationStatus = 'Real-time tracking active';
       notifyListeners();
     }, onError: (e) {
@@ -77,41 +82,25 @@ class ScooterViewModel extends ChangeNotifier {
 
   void updateSpeed(double val) { speed = val; notifyListeners(); }
   void updateBattery(double val) { battery = val; notifyListeners(); }
+  void updateQrCode(String val) { qrCode = val; notifyListeners(); }
 
   void toggleSimulation() {
     isSimulating = !isSimulating;
     if (isSimulating) {
-      _telemetryTimer = Timer.periodic(const Duration(seconds: 5), (_) => _sendTelemetry());
+      _telemetryTimer = Timer.periodic(const Duration(seconds: 5), (_) => sendToDB());
     } else {
       _telemetryTimer?.cancel();
     }
     notifyListeners();
   }
 
-  Future<void> _sendTelemetry() async {
 
-    final url = Uri.parse('http://192.168.x.x:3000/api/telemetry'); 
-    
-    final payload = {
-      'vehicleId': vehicleId,
-      'batteryLevel': battery.toInt(),
-      'positionX': latitude,
-      'positionY': longitude,
-      'speed': speed,
-      'timestamp': DateTime.now().toIso8601String(),
-    };
-
-    try {
-      final response = await http.post(
-        url, 
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(payload),
-      );
-      debugPrint("Telemetry sent: $payload, Status: ${response.statusCode}");
-    } catch (e) { 
-      debugPrint("Error sending telemetry: $e"); 
+  Future sendToDB() async {
+    if (x != 0 && y != 0) {
+      await DatabaseHelper.insertTelemetry(qrCode, battery, x, y);
     }
   }
+
 
   @override
   void dispose() {
@@ -119,4 +108,5 @@ class ScooterViewModel extends ChangeNotifier {
     _telemetryTimer?.cancel();
     super.dispose();
   }
+
 }
