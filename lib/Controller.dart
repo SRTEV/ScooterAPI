@@ -87,7 +87,7 @@ class ScooterViewModel extends ChangeNotifier {
   void toggleSimulation() {
     isSimulating = !isSimulating;
     if (isSimulating) {
-      _telemetryTimer = Timer.periodic(const Duration(seconds: 5), (_) => sendToDB());
+      _telemetryTimer = Timer.periodic(const Duration(seconds: 15), (_) => sendToDB());
     } else {
       _telemetryTimer?.cancel();
     }
@@ -97,7 +97,7 @@ class ScooterViewModel extends ChangeNotifier {
 
   Future sendToDB() async {
     if (x != 0 && y != 0) {
-      await DatabaseHelper.insertTelemetry(qrCode, battery, x, y);
+      await DatabaseHelper.insertTelemetry(qrCode, battery, x, y, speed);
     }
   }
 
