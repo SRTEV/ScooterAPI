@@ -1,60 +1,67 @@
-import 'package:mysql1/mysql1.dart';
-import 'package:flutter/foundation.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'models.dart';
 
-class DatabaseHelper {
-  static ConnectionSettings get settings {
-    return ConnectionSettings(
-      host: dotenv.env['DB_HOST']!,
-      port: int.parse(dotenv.env['DB_PORT']!),
-      user: dotenv.env['DB_USER']! ,
-      password: dotenv.env['DB_PASSWORD']! ,
-      db: dotenv.env['DB_NAME']!,
-    );
-  }
+class ApiService {
+  static String get baseUrl => dotenv.env['API_URL'] ?? 'http://10.0.2.2:5000/api';
 
-  static Future<void> connectToDatabase() async {
+  static Future<List<VehicleType>> getVehicleTypes() async {
     try {
-      final conn = await MySqlConnection.connect(settings);
-      debugPrint("Connected successfully to MySQL!");
-      await conn.close();
-    } catch (e) {
-      debugPrint("Database error (connect): $e");
-    }
-  }
-
-  static Future<void> insertTelemetry(String qrCode, double battery, double x, double y, double speed) async {
-    MySqlConnection? conn;
-    try {
-      conn = await MySqlConnection.connect(settings);
-
-      await conn.query(
-        '''
-        UPDATE Vehicle 
-        SET Battery_level = ?, Position_X = ?, Position_Y = ?, Last_activity = NOW() 
-        WHERE QR_code = ?
-        ''',
-        [battery.toInt(), x, y, qrCode]
-      );
-
-      var result = await conn.query(
-        '''
-        INSERT INTO Route_History (VehicleID, Position_X, Position_Y, Battery_level, Speed)
-        SELECT ID, ?, ?, ?, ? FROM Vehicle WHERE QR_code = ?
-        ''',
-        [x, y, battery.toInt(), speed, qrCode]
-      );
-
-      if (result.affectedRows == 0) {
-        debugPrint("Warning: No vehicle found with QR Code: $qrCode");
-      } else {
-        debugPrint("Telemetry & route updated!");
+      final response = await http.get(Uri.parse('$baseUrl/VehicleType'));
+      if (response.statusCode == 200) {
+        List data = json.decode(response.body);
+        return data.map((e) => VehicleType.fromJson(e)).toList();
       }
-
     } catch (e) {
-      debugPrint("Database error (insert/update): $e");
-    } finally {
-      await conn?.close();
+      print("Error fetching types: $e");
+    }
+    return [];
+  }
+
+  static Future<List<Vehicle>> getVehicles() async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/Vehicle'));
+      if (response.statusCode == 200) {
+        List data = json.decode(response.body);
+        return data.map((e) => Vehicle.fromJson(e)).toList();
+      }
+    } catch (e) {
+      print("Error fetching vehicles: $e");
+    }
+    return [];
+  }
+
+  static Future<List<Zone>> getZones() async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/Zone'));
+      if (response.statusCode == 200) {
+        List data = json.decode(response.body);
+        return data.map((e) => Zone.fromJson(e)).toList();
+      }
+    } catch (e) {
+      print("Error fetching zones: $e");
+    }
+    return [];
+  }
+
+  static Future<bool> sendTelemetry(String qrCode, double battery, double x, double y, double speed) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/Vehicle/telemetry'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'qrCode': qrCode,
+          'battery': battery,
+          'x': x,
+          'y': y,
+          'speed': speed,
+        }),
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      print("Error sending telemetry: $e");
+      return false;
     }
   }
 }
