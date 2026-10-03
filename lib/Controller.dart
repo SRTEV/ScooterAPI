@@ -32,12 +32,14 @@ class ScooterViewModel extends ChangeNotifier {
 
   StreamSubscription<Position>? _positionSubscription;
   Timer? _telemetryTimer;
+  Timer? _dbUpdateTimer; 
 
   bool get isRented => selectedStatus?.id == 2;
 
   ScooterViewModel() {
     _startTracking();
     loadInitialData();
+    _startDbUpdates(); 
   }
 
   Future<void> loadInitialData() async {
@@ -45,6 +47,74 @@ class ScooterViewModel extends ChangeNotifier {
     allVehicles = await ApiService.getVehicles();
     zones = await ApiService.getZones();
     notifyListeners();
+  }
+
+  void _startDbUpdates() {
+    _dbUpdateTimer?.cancel();
+    _dbUpdateTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _refreshVehiclesFromDb();
+    });
+  }
+
+  Future<void> _refreshVehiclesFromDb() async {
+    try {
+      final updatedVehicles = await ApiService.getVehicles();
+      if (updatedVehicles.isEmpty) return;
+
+      allVehicles = updatedVehicles;
+
+      if (selectedType != null) {
+        filteredVehicles = allVehicles.where((v) => v.vehicleTypeId == selectedType!.id).toList();
+      } else {
+        filteredVehicles = [];
+      }
+
+      if (selectedVehicle != null) {
+        final index = filteredVehicles.indexWhere((v) => v.id == selectedVehicle!.id);
+        if (index != -1) {
+          final oldStatusId = selectedStatus?.id;
+          
+          selectedVehicle = filteredVehicles[index];
+          selectedStatus = statuses.firstWhere(
+            (s) => s.id == selectedVehicle!.vehicleStatusId,
+            orElse: () => statuses.first,
+          );
+          
+          _checkZoneFromDbFlag();
+
+          if (oldStatusId != selectedStatus!.id) {
+            _handleStatusChange();
+          }
+        } else {
+          selectedVehicle = null;
+          selectedStatus = null;
+          _stopTelemetry();
+        }
+      }
+      
+      notifyListeners();
+    } catch (e) {
+      if (kDebugMode) {
+        print("Background vehicle update error: $e");
+      }
+    }
+  }
+
+  void _checkZoneFromDbFlag() {
+    if (selectedVehicle == null) return;
+
+    bool restricted = (selectedVehicle!.inZone == 1);
+
+    if (isInRedZone != restricted) {
+      isInRedZone = restricted;
+      if (isInRedZone) {
+        maxAllowedSpeed = 0.0;
+        speed = 0.0;
+      } else {
+        maxAllowedSpeed = 20.0;
+      }
+      notifyListeners();
+    }
   }
 
   void selectVehicleType(VehicleType? type) {
@@ -71,17 +141,21 @@ class ScooterViewModel extends ChangeNotifier {
         (s) => s.id == vehicle.vehicleStatusId,
         orElse: () => statuses.first,
       );
+      
+      _checkZoneFromDbFlag(); 
       _handleStatusChange();
     } else {
       selectedStatus = null;
       _stopTelemetry();
     }
-    checkGeoZone();
     notifyListeners();
   }
 
   void updateStatus(VehicleStatus? status) {
     if (status == null || selectedVehicle == null) return;
+    
+    if (selectedStatus?.id == status.id) return;
+
     selectedStatus = status;
     selectedVehicle!.vehicleStatusId = status.id;
     _handleStatusChange();
@@ -99,8 +173,9 @@ class ScooterViewModel extends ChangeNotifier {
 
   void _startTelemetry() {
     _telemetryTimer?.cancel();
-    sendToAPI();
-    _telemetryTimer = Timer.periodic(const Duration(seconds: 15), (_) => sendToAPI());
+    sendToAPI(); // Відправляємо миттєво перший раз
+    // Запускаємо строгий таймер кожні 5 секунд
+    _telemetryTimer = Timer.periodic(const Duration(seconds: 5), (_) => sendToAPI());
   }
 
   void _stopTelemetry() {
@@ -110,7 +185,9 @@ class ScooterViewModel extends ChangeNotifier {
   void updateSpeed(double val) {
     if (!isRented) return;
     
-    if (val > maxAllowedSpeed) {
+    if (isInRedZone || maxAllowedSpeed == 0) {
+      speed = 0;
+    } else if (val > maxAllowedSpeed) {
       speed = maxAllowedSpeed;
     } else {
       speed = val;
@@ -156,52 +233,11 @@ class ScooterViewModel extends ChangeNotifier {
       x = pos.latitude;
       y = pos.longitude;
       locationStatus = 'Real-time tracking active';
-      checkGeoZone();
       notifyListeners();
     }, onError: (e) {
       locationStatus = 'Error: $e';
       notifyListeners();
     });
-  }
-
-  void checkGeoZone() {
-    if (selectedVehicle == null || x == 0.0 || y == 0.0) return;
-
-    bool restricted = false;
-
-    for (var zone in zones) {
-      if (zone.vehicleTypeId != selectedVehicle!.vehicleTypeId) {
-        if (_isPointInPolygon(x, y, zone.points)) {
-          restricted = true;
-          break;
-        }
-      }
-    }
-
-    isInRedZone = restricted;
-
-    if (isInRedZone) {
-      maxAllowedSpeed = 0.0;
-      speed = 0.0;
-    } else {
-      maxAllowedSpeed = 20.0;
-    }
-  }
-
-  bool _isPointInPolygon(double px, double py, List<List<double>> polygon) {
-    if (polygon.isEmpty) return false;
-    bool isInside = false;
-    int j = polygon.length - 1;
-    for (int i = 0; i < polygon.length; i++) {
-      double xi = polygon[i][0], yi = polygon[i][1];
-      double xj = polygon[j][0], yj = polygon[j][1];
-
-      bool intersect = ((yi > py) != (yj > py)) &&
-          (px < (xj - xi) * (py - yi) / (yj - yi) + xi);
-      if (intersect) isInside = !isInside;
-      j = i;
-    }
-    return isInside;
   }
 
   Future<void> sendToAPI() async {
@@ -214,6 +250,7 @@ class ScooterViewModel extends ChangeNotifier {
   void dispose() {
     _positionSubscription?.cancel();
     _telemetryTimer?.cancel();
+    _dbUpdateTimer?.cancel();
     super.dispose();
   }
 }

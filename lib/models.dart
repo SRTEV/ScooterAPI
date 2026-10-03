@@ -10,6 +10,14 @@ class VehicleStatus {
       name: json['name'] ?? json['Name'] ?? '',
     );
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VehicleStatus && runtimeType == other.runtimeType && id == other.id;
+
+  @override
+  int get hashCode => id.hashCode;
 }
 
 class VehicleType {
@@ -24,6 +32,14 @@ class VehicleType {
       name: json['name'] ?? json['Name'] ?? '',
     );
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is VehicleType && runtimeType == other.runtimeType && id == other.id;
+
+  @override
+  int get hashCode => id.hashCode;
 }
 
 class Vehicle {
@@ -35,6 +51,7 @@ class Vehicle {
   final double batteryLevel;
   final double positionX;
   final double positionY;
+  final int inZone; 
 
   Vehicle({
     required this.id,
@@ -45,9 +62,20 @@ class Vehicle {
     required this.batteryLevel,
     required this.positionX,
     required this.positionY,
+    required this.inZone,
   });
 
   factory Vehicle.fromJson(Map<String, dynamic> json) {
+    // Safely parse inZone whether it comes as bool (true/false) or int (1/0)
+    dynamic rawInZone = json['in_Zone'] ?? json['In_Zone'] ?? json['inZone'] ?? 0;
+    int finalInZone = 0;
+    
+    if (rawInZone is bool) {
+      finalInZone = rawInZone ? 1 : 0;
+    } else if (rawInZone is int) {
+      finalInZone = rawInZone;
+    }
+
     return Vehicle(
       id: json['id'] ?? json['ID'],
       qrCode: json['qrCode'] ?? json['QR_code'] ?? '',
@@ -57,8 +85,17 @@ class Vehicle {
       batteryLevel: (json['battery_level'] ?? json['Battery_level'] ?? 0).toDouble(),
       positionX: (json['position_X'] ?? json['Position_X'] ?? 0.0).toDouble(),
       positionY: (json['position_Y'] ?? json['Position_Y'] ?? 0.0).toDouble(),
+      inZone: finalInZone,
     );
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Vehicle && runtimeType == other.runtimeType && id == other.id;
+
+  @override
+  int get hashCode => id.hashCode;
 }
 
 class Zone {
