@@ -15,6 +15,13 @@ class ScooterViewModel extends ChangeNotifier {
   String telemetryStatus = 'Telemetry not sent yet';
   bool isInRedZone = false;
 
+  // Failsafe: brak odpowiedzi serwera dłużej niż _offlineLockTimeout -> pojazd blokuje się sam
+  static const Duration _offlineLockTimeout = Duration(seconds: 30);
+  static const int _maxBufferedPoints = 60; // ok. 5 min przy wysyłce co 5 s
+  bool offlineLocked = false;
+  DateTime _lastServerContact = DateTime.now();
+  final List<_TelemetryPoint> _pendingPoints = [];
+
   List<VehicleType> vehicleTypes = [];
   List<Vehicle> allVehicles = [];
   List<Vehicle> filteredVehicles = [];
@@ -34,8 +41,13 @@ class ScooterViewModel extends ChangeNotifier {
   StreamSubscription<Position>? _positionSubscription;
   Timer? _telemetryTimer;
   Timer? _dbUpdateTimer; 
+  Timer? _lockAckTimer; // ponawianie potwierdzenia blokady do skutku
 
   bool get isRented => selectedStatus?.id == 2;
+  // Tryb serwisowy: technik rozpoczął naprawę (status InService) i potrzebuje odblokowanego pojazdu
+  bool get isInService => selectedStatus?.id == 4;
+  // Pojazd odblokowany: wypożyczony albo w serwisie. Każdy inny status = blokada.
+  bool get isUnlocked => isRented || isInService;
 
   ScooterViewModel() {
     _startTracking();
@@ -60,7 +72,11 @@ class ScooterViewModel extends ChangeNotifier {
   Future<void> _refreshVehiclesFromDb() async {
     try {
       final updatedVehicles = await ApiService.getVehicles();
-      if (updatedVehicles.isEmpty) return;
+      if (updatedVehicles.isEmpty) {
+        _checkOfflineLock();
+        return;
+      }
+      _onServerContact();
 
       allVehicles = updatedVehicles;
 
@@ -164,15 +180,66 @@ class ScooterViewModel extends ChangeNotifier {
   }
 
   void _handleStatusChange() {
-    if (isRented) {
+    if (isUnlocked) {
       _startTelemetry();
     } else {
       speed = 0.0;
+      offlineLocked = false;
+      _pendingPoints.clear();
       _stopTelemetry();
+      if (selectedVehicle != null) _startLockAck();
+    }
+  }
+
+  // Potwierdzenie blokady: pojazd wysyła podpisaną wiadomość z locked: true
+  // i ponawia ją co 5 s, dopóki serwer jej nie przyjmie (np. po odzyskaniu łączności).
+  void _startLockAck() {
+    _lockAckTimer?.cancel();
+    _sendLockAck();
+    _lockAckTimer = Timer.periodic(const Duration(seconds: 5), (_) => _sendLockAck());
+  }
+
+  Future<void> _sendLockAck() async {
+    if (qrCode.isEmpty || x == 0 || y == 0) return;
+    final result = await ApiService.sendTelemetry(qrCode, battery, x, y, 0, locked: true);
+    if (result == TelemetryResult.ok) {
+      _lockAckTimer?.cancel();
+      telemetryStatus = 'Lock confirmed to server';
+    } else if (result == TelemetryResult.noDeviceKey || result == TelemetryResult.unauthorized) {
+      _lockAckTimer?.cancel(); // urządzenie nie jest zarejestrowane, ponawianie nic nie da
+      telemetryStatus = 'Lock not confirmed: device not registered';
+    } else {
+      telemetryStatus = 'Lock not confirmed yet (retrying)';
+    }
+    notifyListeners();
+  }
+
+  // Serwer odpowiedział: jeśli pojazd był zablokowany z powodu braku łączności,
+  // a pojazd nadal ma być odblokowany (status Rented lub InService), odblokowujemy go.
+  void _onServerContact() {
+    _lastServerContact = DateTime.now();
+    if (offlineLocked) {
+      offlineLocked = false;
+      if (kDebugMode) print("Connection restored: vehicle unlocked.");
+      notifyListeners();
+    }
+  }
+
+  // Brak odpowiedzi serwera przez _offlineLockTimeout, gdy pojazd jest odblokowany (wypożyczenie lub serwis) -> blokada (prędkość 0).
+  void _checkOfflineLock() {
+    if (!isUnlocked || offlineLocked) return;
+    if (DateTime.now().difference(_lastServerContact) > _offlineLockTimeout) {
+      offlineLocked = true;
+      speed = 0.0;
+      telemetryStatus = 'NO CONNECTION - LOCKED';
+      if (kDebugMode) print("No server response for ${_offlineLockTimeout.inSeconds} s: vehicle locked.");
+      notifyListeners();
     }
   }
 
   void _startTelemetry() {
+    _lastServerContact = DateTime.now();
+    _lockAckTimer?.cancel();
     _telemetryTimer?.cancel();
     sendToAPI(); // Відправляємо миттєво перший раз
     // Запускаємо строгий таймер кожні 5 секунд
@@ -181,12 +248,13 @@ class ScooterViewModel extends ChangeNotifier {
 
   void _stopTelemetry() {
     _telemetryTimer?.cancel();
+    _lockAckTimer?.cancel();
   }
 
   void updateSpeed(double val) {
-    if (!isRented) return;
+    if (!isUnlocked) return;
     
-    if (isInRedZone || maxAllowedSpeed == 0) {
+    if (offlineLocked || isInRedZone || maxAllowedSpeed == 0) {
       speed = 0;
     } else if (val > maxAllowedSpeed) {
       speed = maxAllowedSpeed;
@@ -243,7 +311,24 @@ class ScooterViewModel extends ChangeNotifier {
 
   Future<void> sendToAPI() async {
     if (x != 0 && y != 0 && qrCode.isNotEmpty) {
-      final result = await ApiService.sendTelemetry(qrCode, battery, x, y, speed);
+      final point = _TelemetryPoint(battery, x, y, speed);
+      final result = await ApiService.sendTelemetry(qrCode, point.battery, point.x, point.y, point.speed);
+
+      if (result == TelemetryResult.error) {
+        // Brak łączności: punkt trafia do bufora i zostanie wysłany po odzyskaniu połączenia
+        _pendingPoints.add(point);
+        if (_pendingPoints.length > _maxBufferedPoints) _pendingPoints.removeAt(0);
+        _checkOfflineLock();
+        if (offlineLocked) {
+          telemetryStatus = 'NO CONNECTION - LOCKED (${_pendingPoints.length} points buffered)';
+          notifyListeners();
+          return;
+        }
+      } else if (result == TelemetryResult.ok) {
+        _onServerContact();
+        await _flushPendingPoints();
+      }
+
       telemetryStatus = switch (result) {
         TelemetryResult.ok => 'Telemetry accepted (server verified)',
         TelemetryResult.noDeviceKey => 'No DEVICE_KEY in .env',
@@ -255,11 +340,31 @@ class ScooterViewModel extends ChangeNotifier {
     }
   }
 
+  // Wysyła zbuforowane punkty w kolejności; przerywa przy pierwszym błędzie.
+  Future<void> _flushPendingPoints() async {
+    while (_pendingPoints.isNotEmpty) {
+      final p = _pendingPoints.first;
+      final r = await ApiService.sendTelemetry(qrCode, p.battery, p.x, p.y, p.speed);
+      if (r != TelemetryResult.ok) break;
+      _pendingPoints.removeAt(0);
+    }
+  }
+
   @override
   void dispose() {
     _positionSubscription?.cancel();
     _telemetryTimer?.cancel();
     _dbUpdateTimer?.cancel();
+    _lockAckTimer?.cancel();
     super.dispose();
   }
+}
+
+class _TelemetryPoint {
+  final double battery;
+  final double x;
+  final double y;
+  final double speed;
+
+  _TelemetryPoint(this.battery, this.x, this.y, this.speed);
 }

@@ -96,13 +96,13 @@ class ScooterControlPanel extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 18, 
                   fontWeight: FontWeight.bold,
-                  color: vm.isRented ? Colors.black : Colors.grey,
+                  color: vm.isUnlocked ? Colors.black : Colors.grey,
                 ),
               ),
               Slider(
                 value: vm.speed,
                 max: vm.maxAllowedSpeed > 0 ? vm.maxAllowedSpeed : 1.0,
-                onChanged: (vm.isRented && vm.maxAllowedSpeed > 0) ? vm.updateSpeed : null,
+                onChanged: (vm.isUnlocked && !vm.offlineLocked && vm.maxAllowedSpeed > 0) ? vm.updateSpeed : null,
               ),
 
               Text('Battery: ${vm.battery.toInt()}%', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
@@ -127,10 +127,10 @@ class ScooterControlPanel extends StatelessWidget {
                     Text('Longitude (Y): ${vm.y.toStringAsFixed(6)}'),
                     Text('Telemetry: ${vm.telemetryStatus}'),
                     Text(
-                      'Mode: ${vm.isRented ? "RENTED (Telemetry Active)" : "LOCKED"}',
+                      'Mode: ${vm.offlineLocked ? "NO CONNECTION - LOCKED" : vm.isRented ? "RENTED (Telemetry Active)" : vm.isInService ? "SERVICE MODE (Unlocked)" : "LOCKED"}',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        color: vm.isRented ? Colors.green[800] : Colors.red[800],
+                        color: (vm.isUnlocked && !vm.offlineLocked) ? Colors.green[800] : Colors.red[800],
                       ),
                     ),
                   ],

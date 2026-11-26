@@ -75,7 +75,7 @@ class ApiService {
   // Dwustronne uwierzytelnianie HMAC-SHA256:
   //  - urządzenie podpisuje treść żądania swoim kluczem (nagłówek X-Signature),
   //  - serwer podpisuje treść odpowiedzi tym samym kluczem (X-Server-Signature), a urządzenie to weryfikuje.
-  static Future<TelemetryResult> sendTelemetry(String qrCode, double battery, double x, double y, double speed) async {
+  static Future<TelemetryResult> sendTelemetry(String qrCode, double battery, double x, double y, double speed, {bool locked = false}) async {
     final key = _deviceKey;
     if (key == null) return TelemetryResult.noDeviceKey;
 
@@ -86,6 +86,7 @@ class ApiService {
       'x': x,
       'y': y,
       'speed': speed,
+      'locked': locked, // stan blokady pojazdu (potwierdzenie polecenia blokady)
     });
     final signature = base64.encode(_hmac(key, utf8.encode(body)));
 
